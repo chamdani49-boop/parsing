@@ -728,17 +728,16 @@ function processSheet(rawSheet, sheetName) {
   const maxCol = range.e.c;
 
   // ── Struktur data Stockbit ──────────────────────────────────────
-  // Kolom A (0) : kategori (Income Statement, Key Stats, dll) — kadang kosong
-  // Kolom B (1) : label / nama metrik
-  // Kolom C (2) : nilai Q1 terbaru (quarter)
-  // Kolom D (3) : Q4 sebelumnya  |  Kolom E (4) : Q3
-  // Kolom F (5) : Q2             |  Kolom G (6) : Q4 lagi (TTM total)
-  // Kolom H (7) : annual terbaru (12M tahun lalu)
-  // Kolom I+ (8+): annual lebih lama
+  // Struktur data mentah Stockbit (posisi dipertahankan apa adanya di output):
+  // Baris 50      : header periode (Q1 2026, Q4 2025, ..., 12M 2025, 12M 2024, ...)
+  // Kolom B (1)   : kategori (Income Statement, Balance Sheet, dll) — hanya di baris awal seksi
+  // Kolom C (2)   : label / nama metrik (Total Pendapatan, dll)
+  // Kolom D (3)   : nilai Q1 terbaru | E (4)=Q4 | F (5)=Q3 | G (6)=Q2
+  // Kolom H (7)   : tahun berjalan (sering kosong di data mentah)
+  // Kolom I+ (8+) : nilai tahunan (I=12M terbaru, lalu mundur)
 
   // Kolom Q yang akan dihapus berdasarkan pilihan user
-  // Di header baris 1: D=Q1, E=Q2, F=Q3, G=Q4 (output kita)
-  // tapi di data mentah: C=Q1 terbaru, D-G=Q lain/kosong, H+=annual
+  // Di header baris 1 (output): D=Q1, E=Q2, F=Q3, G=Q4
   const Q_OUT = { Q1: 3, Q2: 4, Q3: 5, Q4: 6 }; // kolom output di baris 1-40
   const clearCols = new Set();
   for (const q of deletedQ) {
@@ -792,6 +791,18 @@ function processSheet(rawSheet, sheetName) {
   let baseYear = currentYear - 1; // default: kolom H = tahun lalu
   // baseYear adalah tahun untuk kolom H (annual terbaru)
 
+  // Baca label periode langsung dari baris header data mentah (baris 50 = range.s.r)
+  // Ini membuat label tahun selalu akurat & sejajar dengan data (mis. "12M 2025").
+  const rawHeaderRow = range.s.r;
+  const getHeaderText = (ci) => {
+    const hc = rawSheet[XLSX.utils.encode_cell({r: rawHeaderRow, c: ci})];
+    return hc ? String(hc.v || '') : '';
+  };
+  const parseHeaderYear = (txt) => {
+    const m = String(txt).match(/(\d{4})/);
+    return m ? parseInt(m[1], 10) : null;
+  };
+
   // Ticker
   const ticker = sheetName.toUpperCase();
 
@@ -807,7 +818,7 @@ function processSheet(rawSheet, sheetName) {
   if (!clearCols.has(6)) setCell(newSheet, 0, 6, 'Q4', 's');
   setCell(newSheet, 0, 7, 'tahun Berjalan', 's');
   for (let ci = annualStartCol + 1; ci <= maxCol; ci++) {
-    const yr = baseYear - (ci - annualStartCol);
+    const yr = parseHeaderYear(getHeaderText(ci)) || (baseYear - (ci - annualStartCol));
     setCell(newSheet, 0, ci, new Date(yr, 11, 30), 'd');
   }
 
@@ -824,16 +835,16 @@ function processSheet(rawSheet, sheetName) {
   if (!clearCols.has(6)) setCell(newSheet, 2, 6, `Jan ${currentYear+1}`, 's');
 
   // === BARIS 4–16: Ringkasan finansial dengan INDEX/MATCH ke kolom B ===
-  // PERBAIKAN KUNCI: data di kolom B (label), C (Q1), H+ (annual)
-  // Rumus INDEX/MATCH sekarang mengacu $B$51:$B$500 bukan $C$50:$C$400
+  // Data mentah: label di kolom C, nilai Q1 di kolom D, nilai tahunan di kolom I+.
+  // Rumus INDEX/MATCH mencocokkan label pada $C$51:$C$500, nilai diambil per-kolom.
 
   const idxB = (col, labelRef) =>
-    `=IFERROR(INDEX(${col}51:${col}500,MATCH(${labelRef},$B$51:$B$500,0)),"")`;
+    `=IFERROR(INDEX(${col}51:${col}500,MATCH(${labelRef},$C$51:$C$500,0)),"")`;
 
-  // Row 4: Total Pendapatan — label di B, Q1 di C, annual di H+
+  // Row 4: Total Pendapatan — label di C, Q1 di D, tahunan di I+
   setCell(newSheet, 3, 1, 'LABA KOTOR', 's');
   setCell(newSheet, 3, 2, 'Total Pendapatan', 's');
-  if (!clearCols.has(3)) setCell(newSheet, 3, 3, idxB('C', '$C$4'), 'f'); // Q1 dari col C
+  if (!clearCols.has(3)) setCell(newSheet, 3, 3, idxB('D', '$C$4'), 'f'); // Q1 dari kolom D
   if (!clearCols.has(4)) setCell(newSheet, 3, 4, '', 's'); // Q2 kosong di Stockbit
   if (!clearCols.has(5)) setCell(newSheet, 3, 5, '', 's'); // Q3 kosong
   if (!clearCols.has(6)) setCell(newSheet, 3, 6, '', 's'); // Q4 kosong
@@ -846,7 +857,7 @@ function processSheet(rawSheet, sheetName) {
   // Row 5: Pemilik Entitas Induk (Laba Bersih)
   setCell(newSheet, 4, 1, 'BERSIH', 's');
   setCell(newSheet, 4, 2, 'Pemilik Entitas Induk', 's');
-  if (!clearCols.has(3)) setCell(newSheet, 4, 3, idxB('C', '$C$5'), 'f');
+  if (!clearCols.has(3)) setCell(newSheet, 4, 3, idxB('D', '$C$5'), 'f');
   if (!clearCols.has(4)) setCell(newSheet, 4, 4, '', 's');
   if (!clearCols.has(5)) setCell(newSheet, 4, 5, '', 's');
   if (!clearCols.has(6)) setCell(newSheet, 4, 6, '', 's');
@@ -859,8 +870,9 @@ function processSheet(rawSheet, sheetName) {
   // Row 6: Total Ekuitas
   setCell(newSheet, 5, 1, 'EQUITY', 's');
   setCell(newSheet, 5, 2, 'Total Ekuitas', 's');
-  if (!clearCols.has(3)) setCell(newSheet, 5, 3, idxB('C', '$C$6'), 'f');
-  for (let ci = 7; ci <= maxCol; ci++) {
+  if (!clearCols.has(3)) setCell(newSheet, 5, 3, idxB('D', '$C$6'), 'f');
+  if (!clearCols.has(7)) setCell(newSheet, 5, 7, `=IFERROR(INDEX(D6:G6,COUNT(D6:G6)),"")`, 'f');
+  for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
     if (!clearCols.has(ci)) setCell(newSheet, 5, ci, idxB(col, '$C$6'), 'f');
   }
@@ -868,15 +880,16 @@ function processSheet(rawSheet, sheetName) {
   // Row 7: Share Outstanding
   // Di Excel: label "Share Outstanding" ada di B (bagian Key Ratio), data di C-G (quarterly) dan H+ (annual)
   // Format Key Ratio: "24,03 B" = 24030000000 — harus ambil dari baris Balance Sheet "Saham Beredar" (angka penuh)
-  // Atau cek dua sumber: MATCH "Share Outstanding" di $B$51:$B$500
+  // Atau cek dua sumber: MATCH "Share Outstanding" di $C$51:$C$500
   setCell(newSheet, 6, 1, 'SAHAM BEREDAR', 's');
   setCell(newSheet, 6, 2, 'Share Outstanding', 's');
   // Q1-Q4: ambil dari Key Ratio section (kolom C-F)
-  if (!clearCols.has(3)) setCell(newSheet, 6, 3, `=IFERROR(INDEX(C51:C500,MATCH("Share Outstanding",$B$51:$B$500,0)),IFERROR(INDEX(C51:C500,MATCH($C$7,$B$51:$B$500,0)),""))`, 'f');
-  if (!clearCols.has(4)) setCell(newSheet, 6, 4, `=IFERROR(INDEX(D51:D500,MATCH("Share Outstanding",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(5)) setCell(newSheet, 6, 5, `=IFERROR(INDEX(E51:E500,MATCH("Share Outstanding",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(6)) setCell(newSheet, 6, 6, `=IFERROR(INDEX(F51:F500,MATCH("Share Outstanding",$B$51:$B$500,0)),"")`, 'f');
-  for (let ci = 7; ci <= maxCol; ci++) {
+  if (!clearCols.has(3)) setCell(newSheet, 6, 3, `=IFERROR(INDEX(D51:D500,MATCH("Share Outstanding",$C$51:$C$500,0)),IFERROR(INDEX(D51:D500,MATCH($C$7,$C$51:$C$500,0)),""))`, 'f');
+  if (!clearCols.has(4)) setCell(newSheet, 6, 4, `=IFERROR(INDEX(E51:E500,MATCH("Share Outstanding",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(5)) setCell(newSheet, 6, 5, `=IFERROR(INDEX(F51:F500,MATCH("Share Outstanding",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(6)) setCell(newSheet, 6, 6, `=IFERROR(INDEX(G51:G500,MATCH("Share Outstanding",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(7)) setCell(newSheet, 6, 7, `=IFERROR(INDEX(D7:G7,COUNT(D7:G7)),"")`, 'f');
+  for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
     if (!clearCols.has(ci)) setCell(newSheet, 6, ci, idxB(col, '$C$7'), 'f');
   }
@@ -887,12 +900,12 @@ function processSheet(rawSheet, sheetName) {
   setCell(newSheet, 7, 0, 'Free cash flow (Quarter)', 's');
   setCell(newSheet, 7, 1, 'FCF', 's');
   setCell(newSheet, 7, 2, 'Free cash flow (Annual)', 's');
-  if (!clearCols.has(3)) setCell(newSheet, 7, 3, `=IFERROR(INDEX(C51:C500,MATCH("Free cash flow (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(4)) setCell(newSheet, 7, 4, `=IFERROR(INDEX(D51:D500,MATCH("Free cash flow (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(5)) setCell(newSheet, 7, 5, `=IFERROR(INDEX(E51:E500,MATCH("Free cash flow (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(6)) setCell(newSheet, 7, 6, `=IFERROR(INDEX(F51:F500,MATCH("Free cash flow (Quarter)",$B$51:$B$500,0)),"")`, 'f');
+  if (!clearCols.has(3)) setCell(newSheet, 7, 3, `=IFERROR(INDEX(D51:D500,MATCH("Free cash flow (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(4)) setCell(newSheet, 7, 4, `=IFERROR(INDEX(E51:E500,MATCH("Free cash flow (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(5)) setCell(newSheet, 7, 5, `=IFERROR(INDEX(F51:F500,MATCH("Free cash flow (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(6)) setCell(newSheet, 7, 6, `=IFERROR(INDEX(G51:G500,MATCH("Free cash flow (Quarter)",$C$51:$C$500,0)),"")`, 'f');
   // Kolom H dan seterusnya: langsung lookup "Free cash flow (Annual)"
-  if (!clearCols.has(7)) setCell(newSheet, 7, 7, idxB('H', '$C$8'), 'f');
+  if (!clearCols.has(7)) setCell(newSheet, 7, 7, `=IFERROR(INDEX(D8:G8,COUNT(D8:G8)),"")`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
     if (!clearCols.has(ci)) setCell(newSheet, 7, ci, idxB(col, '$C$8'), 'f');
@@ -903,12 +916,12 @@ function processSheet(rawSheet, sheetName) {
   // Annual (H+): dari "Free cash flow per share (Annual)"
   setCell(newSheet, 8, 0, 'Free cash flow per share (Quarter)', 's');
   setCell(newSheet, 8, 2, 'Free cash flow per share (Annual)', 's');
-  if (!clearCols.has(3)) setCell(newSheet, 8, 3, `=IFERROR(INDEX(C51:C500,MATCH("Free cash flow per share (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(4)) setCell(newSheet, 8, 4, `=IFERROR(INDEX(D51:D500,MATCH("Free cash flow per share (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(5)) setCell(newSheet, 8, 5, `=IFERROR(INDEX(E51:E500,MATCH("Free cash flow per share (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(6)) setCell(newSheet, 8, 6, `=IFERROR(INDEX(F51:F500,MATCH("Free cash flow per share (Quarter)",$B$51:$B$500,0)),"")`, 'f');
+  if (!clearCols.has(3)) setCell(newSheet, 8, 3, `=IFERROR(INDEX(D51:D500,MATCH("Free cash flow per share (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(4)) setCell(newSheet, 8, 4, `=IFERROR(INDEX(E51:E500,MATCH("Free cash flow per share (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(5)) setCell(newSheet, 8, 5, `=IFERROR(INDEX(F51:F500,MATCH("Free cash flow per share (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(6)) setCell(newSheet, 8, 6, `=IFERROR(INDEX(G51:G500,MATCH("Free cash flow per share (Quarter)",$C$51:$C$500,0)),"")`, 'f');
   // Kolom H dan seterusnya: dari "Free cash flow per share (Annual)"
-  if (!clearCols.has(7)) setCell(newSheet, 8, 7, idxB('H', '$C$9'), 'f');
+  if (!clearCols.has(7)) setCell(newSheet, 8, 7, `=IFERROR(INDEX(D9:G9,COUNT(D9:G9)),"")`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
     if (!clearCols.has(ci)) setCell(newSheet, 8, ci, idxB(col, '$C$9'), 'f');
@@ -929,11 +942,12 @@ function processSheet(rawSheet, sheetName) {
   // Annual (H+): dari label yang sama
   setCell(newSheet, 10, 1, 'Total Kas', 's');
   setCell(newSheet, 10, 2, 'Kas Dan Setara Kas', 's');
-  if (!clearCols.has(3)) setCell(newSheet, 10, 3, `=IFERROR(INDEX(C51:C500,MATCH($C$11,$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(4)) setCell(newSheet, 10, 4, `=IFERROR(INDEX(D51:D500,MATCH($C$11,$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(5)) setCell(newSheet, 10, 5, `=IFERROR(INDEX(E51:E500,MATCH($C$11,$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(6)) setCell(newSheet, 10, 6, `=IFERROR(INDEX(F51:F500,MATCH($C$11,$B$51:$B$500,0)),"")`, 'f');
-  for (let ci = 7; ci <= maxCol; ci++) {
+  if (!clearCols.has(3)) setCell(newSheet, 10, 3, `=IFERROR(INDEX(D51:D500,MATCH($C$11,$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(4)) setCell(newSheet, 10, 4, `=IFERROR(INDEX(E51:E500,MATCH($C$11,$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(5)) setCell(newSheet, 10, 5, `=IFERROR(INDEX(F51:F500,MATCH($C$11,$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(6)) setCell(newSheet, 10, 6, `=IFERROR(INDEX(G51:G500,MATCH($C$11,$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(7)) setCell(newSheet, 10, 7, `=IFERROR(INDEX(D11:G11,COUNT(D11:G11)),"")`, 'f');
+  for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
     if (!clearCols.has(ci)) setCell(newSheet, 10, ci, idxB(col, '$C$11'), 'f');
   }
@@ -944,11 +958,11 @@ function processSheet(rawSheet, sheetName) {
   setCell(newSheet, 11, 0, 'Net Debt (Quarter)', 's');
   setCell(newSheet, 11, 1, 'Net hutang sudah di kurangi kas', 's');
   setCell(newSheet, 11, 2, 'Net Debt (Annual)', 's');
-  if (!clearCols.has(3)) setCell(newSheet, 11, 3, `=IFERROR(INDEX(C51:C500,MATCH("Net Debt (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(4)) setCell(newSheet, 11, 4, `=IFERROR(INDEX(D51:D500,MATCH("Net Debt (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(5)) setCell(newSheet, 11, 5, `=IFERROR(INDEX(E51:E500,MATCH("Net Debt (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(6)) setCell(newSheet, 11, 6, `=IFERROR(INDEX(F51:F500,MATCH("Net Debt (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(7)) setCell(newSheet, 11, 7, idxB('H', '$C$12'), 'f');
+  if (!clearCols.has(3)) setCell(newSheet, 11, 3, `=IFERROR(INDEX(D51:D500,MATCH("Net Debt (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(4)) setCell(newSheet, 11, 4, `=IFERROR(INDEX(E51:E500,MATCH("Net Debt (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(5)) setCell(newSheet, 11, 5, `=IFERROR(INDEX(F51:F500,MATCH("Net Debt (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(6)) setCell(newSheet, 11, 6, `=IFERROR(INDEX(G51:G500,MATCH("Net Debt (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(7)) setCell(newSheet, 11, 7, `=IFERROR(INDEX(D12:G12,COUNT(D12:G12)),"")`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
     if (!clearCols.has(ci)) setCell(newSheet, 11, ci, idxB(col, '$C$12'), 'f');
@@ -960,11 +974,11 @@ function processSheet(rawSheet, sheetName) {
   setCell(newSheet, 12, 0, 'Total Debt (Quarter)', 's');
   setCell(newSheet, 12, 1, 'WACC', 's');
   setCell(newSheet, 12, 2, 'Total Debt (Annual)', 's');
-  if (!clearCols.has(3)) setCell(newSheet, 12, 3, `=IFERROR(INDEX(C51:C500,MATCH("Total Debt (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(4)) setCell(newSheet, 12, 4, `=IFERROR(INDEX(D51:D500,MATCH("Total Debt (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(5)) setCell(newSheet, 12, 5, `=IFERROR(INDEX(E51:E500,MATCH("Total Debt (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(6)) setCell(newSheet, 12, 6, `=IFERROR(INDEX(F51:F500,MATCH("Total Debt (Quarter)",$B$51:$B$500,0)),"")`, 'f');
-  if (!clearCols.has(7)) setCell(newSheet, 12, 7, idxB('H', '$C$13'), 'f');
+  if (!clearCols.has(3)) setCell(newSheet, 12, 3, `=IFERROR(INDEX(D51:D500,MATCH("Total Debt (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(4)) setCell(newSheet, 12, 4, `=IFERROR(INDEX(E51:E500,MATCH("Total Debt (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(5)) setCell(newSheet, 12, 5, `=IFERROR(INDEX(F51:F500,MATCH("Total Debt (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(6)) setCell(newSheet, 12, 6, `=IFERROR(INDEX(G51:G500,MATCH("Total Debt (Quarter)",$C$51:$C$500,0)),"")`, 'f');
+  if (!clearCols.has(7)) setCell(newSheet, 12, 7, `=IFERROR(INDEX(D13:G13,COUNT(D13:G13)),"")`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
     if (!clearCols.has(ci)) setCell(newSheet, 12, ci, idxB(col, '$C$13'), 'f');
@@ -972,7 +986,7 @@ function processSheet(rawSheet, sheetName) {
 
   // Row 14: Beban Keuangan
   setCell(newSheet, 13, 2, 'Beban Keuangan', 's');
-  if (!clearCols.has(3)) setCell(newSheet, 13, 3, idxB('C', '$C$14'), 'f');
+  if (!clearCols.has(3)) setCell(newSheet, 13, 3, idxB('D', '$C$14'), 'f');
   setCell(newSheet, 13, 7, `=IFERROR(SUM(D14:G14)*(4/MAX(1,COUNT(D14:G14))),${idxB('H','$C$14')})`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
@@ -981,7 +995,7 @@ function processSheet(rawSheet, sheetName) {
 
   // Row 15: Beban Pajak Penghasilan
   setCell(newSheet, 14, 2, 'Beban Pajak Penghasilan', 's');
-  if (!clearCols.has(3)) setCell(newSheet, 14, 3, idxB('C', '$C$15'), 'f');
+  if (!clearCols.has(3)) setCell(newSheet, 14, 3, idxB('D', '$C$15'), 'f');
   setCell(newSheet, 14, 7, `=IFERROR(SUM(D15:G15)*(4/MAX(1,COUNT(D15:G15))),${idxB('H','$C$15')})`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
@@ -990,7 +1004,7 @@ function processSheet(rawSheet, sheetName) {
 
   // Row 16: Laba Sebelum Pajak
   setCell(newSheet, 15, 2, 'Laba Sebelum Pajak', 's');
-  if (!clearCols.has(3)) setCell(newSheet, 15, 3, idxB('C', '$C$16'), 'f');
+  if (!clearCols.has(3)) setCell(newSheet, 15, 3, idxB('D', '$C$16'), 'f');
   setCell(newSheet, 15, 7, `=IFERROR(SUM(D16:G16)*(4/MAX(1,COUNT(D16:G16))),${idxB('H','$C$16')})`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
@@ -1008,8 +1022,9 @@ function processSheet(rawSheet, sheetName) {
   if (!clearCols.has(6)) setCell(newSheet, 17, 6, 'Q4', 's');
   setCell(newSheet, 17, 7, 'tahun Berjalan', 's');
   for (let ci = annualStartCol + 1; ci <= maxCol; ci++) {
-    const yr = baseYear - (ci - annualStartCol);
-    if (!clearCols.has(ci)) setCell(newSheet, 17, ci, `12M ${yr}`, 's');
+    const hdr = getHeaderText(ci);
+    const yr = parseHeaderYear(hdr) || (baseYear - (ci - annualStartCol));
+    if (!clearCols.has(ci)) setCell(newSheet, 17, ci, hdr || `12M ${yr}`, 's');
   }
 
   // === BARIS 19 ===
@@ -1026,7 +1041,7 @@ function processSheet(rawSheet, sheetName) {
     // Share Outstanding: cari "Current Share Outstanding" di key stats (col H=annual)
     // atau "Share Outstanding" di quarterly
     if (ci === 3) {
-      setCell(newSheet, 20, ci, `=IFERROR(INDEX(C51:C500,MATCH("Share Outstanding",$B$51:$B$500,0)),"")`, 'f');
+      setCell(newSheet, 20, ci, `=IFERROR(INDEX(D51:D500,MATCH("Share Outstanding",$C$51:$C$500,0)),"")`, 'f');
     } else {
       setCell(newSheet, 20, ci, idxB(col, '"Share Outstanding"'), 'f');
     }
@@ -1048,15 +1063,15 @@ function processSheet(rawSheet, sheetName) {
     const col = XLSX.utils.encode_col(ci);
     const col5 = XLSX.utils.encode_col(ci + 5);
     setCell(newSheet, 22, ci, `=IFERROR(${col}5/${col}6*100,"")`, 'f');
-    setCell(newSheet, 23, ci, `=IFERROR(RRI(5,${col5}23,${col}23),"")`, 'f');
+    setCell(newSheet, 23, ci, `=IFERROR(_xlfn.RRI(5,${col5}23,${col}23),"")`, 'f');
     if (ci === 3) {
-      setCell(newSheet, 24, ci, `=IFERROR(INDEX(C51:C500,MATCH($A$25,$B$51:$B$500,0)),"")`, 'f');
+      setCell(newSheet, 24, ci, `=IFERROR(INDEX(D51:D500,MATCH($A$25,$C$51:$C$500,0)),"")`, 'f');
     } else {
       setCell(newSheet, 24, ci, idxB(col, '$C$25'), 'f');
     }
-    setCell(newSheet, 25, ci, `=IFERROR(RRI(5,${col5}25,${col}25),"")`, 'f');
+    setCell(newSheet, 25, ci, `=IFERROR(_xlfn.RRI(5,${col5}25,${col}25),"")`, 'f');
     setCell(newSheet, 26, ci, `=IFERROR(${col}4/${col}21,"")`, 'f');
-    setCell(newSheet, 27, ci, `=IFERROR(RRI(5,${col5}27,${col}27),"")`, 'f');
+    setCell(newSheet, 27, ci, `=IFERROR(_xlfn.RRI(5,${col5}27,${col}27),"")`, 'f');
   }
 
   // === BARIS 32-37: Book Value, PBV, PER, PSR, DPR, DPS ===
@@ -1077,36 +1092,44 @@ function processSheet(rawSheet, sheetName) {
       if (clearCols.has(ci)) continue;
       const col = XLSX.utils.encode_col(ci);
       if (ci === 3 && a) {
-        setCell(newSheet, rowIdx, ci, `=IFERROR(INDEX(C51:C500,MATCH($A$${rowIdx+1},$B$51:$B$500,0)),"")`, 'f');
+        setCell(newSheet, rowIdx, ci, `=IFERROR(INDEX(D51:D500,MATCH($A$${rowIdx+1},$C$51:$C$500,0)),"")`, 'f');
       } else {
         setCell(newSheet, rowIdx, ci, idxB(col, `$C$${rowIdx+1}`), 'f');
       }
     }
   });
 
-  // === BARIS 51+: Data mentah dari Stockbit (mulai dari row index 0 = baris 1 di file asli) ===
-  // Semua data raw dikopi mulai baris 51 (index 50)
+  // === BARIS 50+: Data mentah dari Stockbit — posisi baris & kolom dipertahankan persis ===
+  // Header data mentah di baris 50 (range.s.r), data mulai baris 51.
+  // Kolom dipertahankan: B=kategori, C=label, D=Q1, E..G=kuartal, H..=tahunan.
+  // Format akuntansi diterapkan ke blok nilai D51:Z400.
+  const ACC_FMT = '_(* #,##0_);_(* (#,##0);_(* "-"_);_(@_)';
   rawData.forEach((row, ri) => {
-    const destRow = 50 + ri; // baris 51 = index 50
+    const destRow = range.s.r + ri; // preserve baris asli (header di baris 50)
     row.forEach((cell, ci) => {
       if (!cell) return;
-      // Jangan hapus kolom Q di data mentah — hanya di header (baris 1-40)
+      const destCol = range.s.c + ci; // preserve kolom asli (tanpa geser)
       const v = cell.v;
       const t = cell.t;
       if (v !== null && v !== undefined) {
         if (t === 'd' || v instanceof Date) {
-          setCell(newSheet, destRow, ci, v, 'd');
+          setCell(newSheet, destRow, destCol, v, 'd');
         } else if (t === 'n' || typeof v === 'number') {
-          setCell(newSheet, destRow, ci, v, 'n');
+          setCell(newSheet, destRow, destCol, v, 'n');
+          // Format akuntansi untuk blok nilai D51:Z400 (kolom D..Z, baris 51..400)
+          if (destCol >= 3 && destCol <= 25 && destRow >= 50 && destRow <= 399) {
+            const addr = XLSX.utils.encode_cell({r: destRow, c: destCol});
+            if (newSheet[addr]) newSheet[addr].z = ACC_FMT;
+          }
         } else {
-          setCell(newSheet, destRow, ci, String(v), 's');
+          setCell(newSheet, destRow, destCol, String(v), 's');
         }
       }
     });
     maxR = Math.max(maxR, destRow);
   });
 
-  maxR = Math.max(maxR, 50 + rawData.length);
+  maxR = Math.max(maxR, range.s.r + rawData.length);
 
   newSheet['!ref'] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:maxR, c:maxCol}});
 
