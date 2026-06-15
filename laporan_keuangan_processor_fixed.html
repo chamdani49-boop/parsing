@@ -233,6 +233,15 @@
     border-color: var(--accent);
     outline: none;
   }
+  .year-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+    margin-top: 6px;
+    max-height: 168px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
 
   .q-btn {
     background: var(--surface2);
@@ -563,10 +572,12 @@
         <label class="date-field">Q3 (rilis) → F3<input type="date" id="dateQ3"></label>
         <label class="date-field">Q4 (rilis) → G3<input type="date" id="dateQ4"></label>
       </div>
-      <label class="date-field" style="margin-top:10px;">
-        Akhir tahun (hari &amp; bulan dipakai untuk semua kolom tahunan I1:Z1)
-        <input type="date" id="dateYearEnd">
-      </label>
+      <div style="margin-top:12px; font-size:11px; color:var(--text-muted); margin-bottom:2px;">
+        Tanggal akhir tahun — diatur per tahun (→ I1:Z1)
+      </div>
+      <div class="year-grid" id="yearDatesGrid">
+        <span style="font-size:11px; color:var(--text-muted);">Upload file dulu untuk mengatur tanggal tiap tahun…</span>
+      </div>
     </div>
 
     <div class="card" style="margin-top: 16px;">
@@ -666,7 +677,33 @@ function initDateInputs() {
   set('dateQ2', fmtDateVal(y, 7, 30));      // Jul (rilis Q2)
   set('dateQ3', fmtDateVal(y, 10, 30));     // Okt (rilis Q3)
   set('dateQ4', fmtDateVal(y + 1, 1, 30));  // Jan (rilis Q4)
-  set('dateYearEnd', fmtDateVal(y, 12, 30));// akhir tahun
+}
+// Bangun input tanggal akhir tahun per tahun (I1:Z1) dari tahun yang ada di semua sheet
+function buildYearInputs() {
+  const wrap = document.getElementById('yearDatesGrid');
+  if (!wrap || !workbook) return;
+  const years = new Set();
+  workbook.SheetNames.forEach(name => {
+    const ws = workbook.Sheets[name];
+    if (!ws || !ws['!ref']) return;
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    const hdrRow = range.s.r; // baris header data mentah (mis. baris 50)
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: hdrRow, c })];
+      if (!cell) continue;
+      const txt = String(cell.v || '');
+      const m = txt.match(/(\d{4})/);
+      if (m && /12M/i.test(txt)) years.add(parseInt(m[1], 10));
+    }
+  });
+  const sorted = [...years].sort((a, b) => b - a);
+  if (!sorted.length) {
+    wrap.innerHTML = '<span style="font-size:11px;color:var(--text-muted)">Tidak ada kolom tahunan terdeteksi.</span>';
+    return;
+  }
+  wrap.innerHTML = sorted.map(yr =>
+    `<label class="date-field">${yr}<input type="date" id="dateYear_${yr}" value="${yr}-12-30"></label>`
+  ).join('');
 }
 // Baca tanggal dari UI -> objek konfigurasi yang dipakai processSheet
 function readDateConfig() {
@@ -675,7 +712,11 @@ function readDateConfig() {
     const v = document.getElementById(id)?.value;
     return v ? new Date(v + 'T00:00:00') : fb;
   };
-  const ye = pd('dateYearEnd', new Date(y, 11, 30));
+  const yearDates = {};
+  document.querySelectorAll('input[id^="dateYear_"]').forEach(el => {
+    const yr = parseInt(el.id.replace('dateYear_', ''), 10);
+    if (el.value) yearDates[yr] = new Date(el.value + 'T00:00:00');
+  });
   return {
     q: [
       pd('dateQ1', new Date(y, 3, 30)),
@@ -683,8 +724,7 @@ function readDateConfig() {
       pd('dateQ3', new Date(y, 9, 30)),
       pd('dateQ4', new Date(y + 1, 0, 30)),
     ],
-    yearMonth: ye.getMonth(),
-    yearDay: ye.getDate(),
+    yearDates,
   };
 }
 
@@ -718,6 +758,7 @@ function loadFile(file) {
       document.getElementById('fileInfo').classList.add('show');
       document.getElementById('btnProcess').disabled = false;
       document.getElementById('statusPanel').innerHTML = '';
+      buildYearInputs(); // bangun input tanggal per tahun dari data
       log(`File dimuat: ${file.name}`, 'ok');
       log(`Ditemukan ${sheets.length} sheet: ${sheets.join(', ')}`, 'info');
       log(`Siap diproses. Pilih quarter yang ingin dihapus lalu klik Proses.`, 'info');
@@ -927,11 +968,11 @@ function processSheet(rawSheet, sheetName) {
   setCell(newSheet, 0, 7, 'tahun Berjalan', 's');
   // Tanggal acuan harga dari UI (typeof guard agar aman saat dijalankan di luar browser)
   const _dc = (typeof dateConfig !== 'undefined' && dateConfig) ? dateConfig : null;
-  const yEndMonth = _dc ? _dc.yearMonth : 11; // default Desember
-  const yEndDay = _dc ? _dc.yearDay : 30;      // default tanggal 30
+  const _yd = (_dc && _dc.yearDates) ? _dc.yearDates : null; // peta tahun -> tanggal (per tahun)
   for (let ci = annualStartCol + 1; ci <= maxCol; ci++) {
     const yr = parseHeaderYear(getHeaderText(ci)) || (baseYear - (ci - annualStartCol));
-    setCell(newSheet, 0, ci, new Date(yr, yEndMonth, yEndDay), 'd');
+    const d = (_yd && _yd[yr]) ? _yd[yr] : new Date(yr, 11, 30); // default 30 Des bila tak diatur
+    setCell(newSheet, 0, ci, d, 'd');
   }
 
   // === BARIS 2: Harga saham via STOCKHISTORY (Excel 365) — sesuai master ===
