@@ -778,6 +778,32 @@ function processSheet(rawSheet, sheetName) {
   // Helper: ambil nilai string dari cell
   const strVal = (cell) => cell ? String(cell.v || '') : null;
 
+  // Helper: konversi teks angka Stockbit -> angka asli.
+  // Menangani: "7.79 B", "13,813 B", "(1,660 B)" (negatif), "28.80%" (persen),
+  // suffix T/B/M/K (triliun/miliar/juta/ribu), pemisah ribuan koma, desimal titik.
+  // Mengembalikan null bila bukan angka (mis. "-", "N/A", teks biasa).
+  const parseStockbitNumber = (raw) => {
+    if (raw === null || raw === undefined) return null;
+    let s = String(raw).trim();
+    if (s === '' || s === '-' || s === 'N/A' || s === '#VALUE!') return null;
+    let neg = false;
+    if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1).trim(); }
+    if (s.startsWith('-')) { neg = true; s = s.slice(1).trim(); }
+    let pct = false;
+    if (s.endsWith('%')) { pct = true; s = s.slice(0, -1).trim(); }
+    const mult = { T: 1e12, B: 1e9, M: 1e6, K: 1e3 };
+    let factor = 1;
+    const sm = s.match(/^([\d.,]+)\s*([TBMK])$/i);
+    let numStr = s;
+    if (sm) { numStr = sm[1]; factor = mult[sm[2].toUpperCase()]; }
+    if (!/^[\d.,]+$/.test(numStr)) return null;          // bukan angka
+    let num = parseFloat(numStr.replace(/,/g, ''));        // buang pemisah ribuan
+    if (isNaN(num)) return null;
+    num = num * factor;
+    if (pct) num = num / 100;
+    return neg ? -num : num;
+  };
+
   // Hitung jumlah kolom annual (kolom H+ = index 7+)
   const annualStartCol = 7; // kolom H
   const annualCount = maxCol - annualStartCol + 1;
@@ -1103,7 +1129,14 @@ function processSheet(rawSheet, sheetName) {
   // Header data mentah di baris 50 (range.s.r), data mulai baris 51.
   // Kolom dipertahankan: B=kategori, C=label, D=Q1, E..G=kuartal, H..=tahunan.
   // Format akuntansi diterapkan ke blok nilai D51:Z400.
-  const ACC_FMT = '_(* #,##0_);_(* (#,##0);_(* "-"_);_(@_)';
+  const ACC_INT = '_(* #,##0_);_(* (#,##0);_(* "-"_);_(@_)';        // angka bulat
+  const ACC_DEC = '_(* #,##0.00_);_(* (#,##0.00);_(* "-"??_);_(@_)'; // ada desimal (rasio)
+  const applyAcc = (destRow, destCol, num) => {
+    if (destCol >= 3 && destCol <= 25 && destRow >= 50 && destRow <= 399) {
+      const addr = XLSX.utils.encode_cell({r: destRow, c: destCol});
+      if (newSheet[addr]) newSheet[addr].z = Number.isInteger(num) ? ACC_INT : ACC_DEC;
+    }
+  };
   rawData.forEach((row, ri) => {
     const destRow = range.s.r + ri; // preserve baris asli (header di baris 50)
     row.forEach((cell, ci) => {
@@ -1111,16 +1144,18 @@ function processSheet(rawSheet, sheetName) {
       const destCol = range.s.c + ci; // preserve kolom asli (tanpa geser)
       const v = cell.v;
       const t = cell.t;
-      if (v !== null && v !== undefined) {
-        if (t === 'd' || v instanceof Date) {
-          setCell(newSheet, destRow, destCol, v, 'd');
-        } else if (t === 'n' || typeof v === 'number') {
-          setCell(newSheet, destRow, destCol, v, 'n');
-          // Format akuntansi untuk blok nilai D51:Z400 (kolom D..Z, baris 51..400)
-          if (destCol >= 3 && destCol <= 25 && destRow >= 50 && destRow <= 399) {
-            const addr = XLSX.utils.encode_cell({r: destRow, c: destCol});
-            if (newSheet[addr]) newSheet[addr].z = ACC_FMT;
-          }
+      if (v === null || v === undefined) return;
+      if (t === 'd' || v instanceof Date) {
+        setCell(newSheet, destRow, destCol, v, 'd');
+      } else if (t === 'n' || typeof v === 'number') {
+        setCell(newSheet, destRow, destCol, v, 'n');
+        applyAcc(destRow, destCol, Number(v));
+      } else {
+        // Sel teks: coba konversi angka Stockbit ("7.79 B", "(1,660 B)", "28.80%") ke angka.
+        const parsed = (destCol >= 3 && destRow >= 50) ? parseStockbitNumber(v) : null;
+        if (parsed !== null && !isNaN(parsed)) {
+          setCell(newSheet, destRow, destCol, parsed, 'n');
+          applyAcc(destRow, destCol, parsed);
         } else {
           setCell(newSheet, destRow, destCol, String(v), 's');
         }
@@ -1130,6 +1165,22 @@ function processSheet(rawSheet, sheetName) {
   });
 
   maxR = Math.max(maxR, range.s.r + rawData.length);
+
+  // === Format angka untuk baris ringkasan rasio/per-saham (agar tidak dibulatkan) ===
+  // Persen (RRI & payout): ROE 5Th(24), EPS Growth(26), SPS Growth(28), DPR(36)
+  // Desimal 2 angka: FCF/sh(9), P/FCF(10), ROE(23), EPS(25), SPS(27),
+  //                  Book Value(32), PBV(33), PER(34), PSR(35), DPS(37)
+  const PCT_FMT = '0.00%';
+  const DEC_FMT = '#,##0.00';
+  const fmtByRow = {};
+  [23, 25, 27, 35].forEach(r => { fmtByRow[r] = PCT_FMT; });           // index 0-based
+  [8, 9, 22, 24, 26, 31, 32, 33, 34, 36].forEach(r => { fmtByRow[r] = DEC_FMT; });
+  for (const r in fmtByRow) {
+    for (let c = 3; c <= maxCol; c++) {
+      const addr = XLSX.utils.encode_cell({r: +r, c});
+      if (newSheet[addr] && newSheet[addr].t === 'n') newSheet[addr].z = fmtByRow[r];
+    }
+  }
 
   newSheet['!ref'] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:maxR, c:maxCol}});
 
