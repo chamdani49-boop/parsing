@@ -851,7 +851,7 @@ function processSheet(rawSheet, sheetName) {
   // === BARIS 2: Harga saham via STOCKHISTORY (Excel 365) — sesuai master ===
   // D-G: harga pada tanggal rilis kuartal (baris 3). H: harga terkini via _FV (tipe data Stocks).
   // I+: harga pada tanggal akhir tahun (baris 1). Ticker diambil dari $C$1.
-  setCell(newSheet, 1, 2, ticker, 's'); // C2: anchor untuk =_FV (ubah ke tipe data Stocks di Excel)
+  setCell(newSheet, 1, 2, `XIDX:${ticker}`, 's'); // C2: kode bursa:ticker, anchor =_FV (tipe data Stocks)
   for (let ci = 3; ci <= 6; ci++) { // D-G (kuartal) -> tanggal rilis di baris 3
     if (clearCols.has(ci)) continue;
     const col = XLSX.utils.encode_col(ci);
@@ -1219,7 +1219,7 @@ function setCell(sheet, r, c, v, t) {
   if (t === 'f') {
     sheet[addr] = {t: 'n', v: 0, f: v.replace(/^=/, ''), z: '#,##0'};
   } else if (t === 'd') {
-    sheet[addr] = {t: 'd', v: v instanceof Date ? v : new Date(v)};
+    sheet[addr] = {t: 'd', v: v instanceof Date ? v : new Date(v), z: 'dd/mm/yyyy'};
   } else if (t === 'n') {
     const num = Number(v) || 0;
     const fmt = (Math.abs(num) >= 1000 || Number.isInteger(num)) ? '#,##0' : '#,##0.00';
