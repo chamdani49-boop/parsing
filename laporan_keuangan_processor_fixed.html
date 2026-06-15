@@ -976,15 +976,15 @@ function processSheet(rawSheet, sheetName) {
   }
 
   // === BARIS 2: Harga saham via STOCKHISTORY (Excel 365) — sesuai master ===
-  // D-G: harga pada tanggal rilis kuartal (baris 3). H: harga terkini via _FV (tipe data Stocks).
+  // D-G: harga pada tanggal rilis kuartal (baris 3). H: harga kuartal terakhir (dari D2:G2).
   // I+: harga pada tanggal akhir tahun (baris 1). Ticker diambil dari $C$1.
-  setCell(newSheet, 1, 2, `XIDX:${ticker}`, 's'); // C2: kode bursa:ticker, anchor =_FV (tipe data Stocks)
+  setCell(newSheet, 1, 2, `XIDX:${ticker}`, 's'); // C2: kode bursa:ticker (opsional ubah ke tipe data Stocks utk tampilan)
   for (let ci = 3; ci <= 6; ci++) { // D-G (kuartal) -> tanggal rilis di baris 3
     if (clearCols.has(ci)) continue;
     const col = XLSX.utils.encode_col(ci);
     setCell(newSheet, 1, ci, `=IFERROR(_xlfn.STOCKHISTORY("XIDX:" & $C$1, ${col}3, , 0, 0, 1), "Libur")`, 'f');
   }
-  setCell(newSheet, 1, 7, `=_FV(C2,"Price")`, 'f'); // H (tahun berjalan) = harga terkini
+  setCell(newSheet, 1, 7, `=IFERROR(@INDEX(D2:G2,COUNT(D2:G2)),"")`, 'f'); // H (tahun berjalan) = harga kuartal terakhir tersedia
   for (let ci = 8; ci <= maxCol; ci++) { // I+ (tahunan) -> tanggal akhir tahun di baris 1
     if (clearCols.has(ci)) continue;
     const col = XLSX.utils.encode_col(ci);
