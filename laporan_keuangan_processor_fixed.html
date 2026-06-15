@@ -206,6 +206,34 @@
     margin-bottom: 16px;
   }
 
+  /* Date inputs */
+  .date-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .date-field {
+    font-size: 11px;
+    color: var(--text-muted);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .date-field input[type=date] {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12px;
+    color-scheme: dark;
+  }
+  .date-field input[type=date]:focus {
+    border-color: var(--accent);
+    outline: none;
+  }
+
   .q-btn {
     background: var(--surface2);
     border: 2px solid var(--border);
@@ -525,12 +553,30 @@
     </div>
 
     <div class="card" style="margin-top: 16px;">
+      <div class="card-title">Tanggal Acuan Harga</div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:12px; line-height:1.6;">
+        Tanggal ini dipakai rumus <strong style="color:var(--accent)">STOCKHISTORY</strong> untuk mengambil harga saham. Edit di sini <strong>sebelum klik Proses</strong> bila perlu (mis. hindari tanggal libur bursa).
+      </p>
+      <div class="date-grid">
+        <label class="date-field">Q1 (rilis) → D3<input type="date" id="dateQ1"></label>
+        <label class="date-field">Q2 (rilis) → E3<input type="date" id="dateQ2"></label>
+        <label class="date-field">Q3 (rilis) → F3<input type="date" id="dateQ3"></label>
+        <label class="date-field">Q4 (rilis) → G3<input type="date" id="dateQ4"></label>
+      </div>
+      <label class="date-field" style="margin-top:10px;">
+        Akhir tahun (hari &amp; bulan dipakai untuk semua kolom tahunan I1:Z1)
+        <input type="date" id="dateYearEnd">
+      </label>
+    </div>
+
+    <div class="card" style="margin-top: 16px;">
       <div class="card-title">Cara Penggunaan</div>
       <div style="font-size:12px; color:var(--text-muted); line-height:2;">
         <div>① Upload file mentah (.xlsx dari Stockbit)</div>
-        <div>② Pilih quarter mana saja yang ingin dihapus</div>
-        <div>③ Klik tombol <strong style="color:var(--accent)">Proses</strong></div>
-        <div>④ Download file hasil yang sudah terformat</div>
+        <div>② Pilih quarter yang ingin dihapus (opsional)</div>
+        <div>③ Atur <strong style="color:var(--accent)">Tanggal Acuan Harga</strong> bila perlu</div>
+        <div>④ Klik tombol <strong style="color:var(--accent)">Proses</strong></div>
+        <div>⑤ Download file hasil yang sudah terformat</div>
         <div style="margin-top:10px; padding:10px; background:var(--surface2); border-radius:6px; color:var(--text-muted);">
           ℹ️ Program menambahkan <strong style="color:var(--text)">49 baris header</strong> di setiap sheet berisi ringkasan keuangan, rumus INDEX/MATCH, kalkulasi otomatis, dan label kolom standar.
         </div>
@@ -558,6 +604,7 @@ let workbook = null;
 let processedWB = null;
 let fileName = '';
 const deletedQ = new Set(); // Q1, Q2, Q3, Q4
+let dateConfig = null; // tanggal acuan harga dari UI (diisi saat Proses)
 
 // Column mapping in raw file: Q1=col4(D), Q4=col5(E), Q3=col6(F), Q2=col7(G)
 // NOTE: Raw file has Q1 2026, Q4 2025, Q3 2025, Q2 2025 order
@@ -605,6 +652,40 @@ function updateQHint() {
     const keepStr = keep.length > 0 ? keep.join(', ') : '—';
     hint.innerHTML = `<span style="color:var(--danger)">Dihapus: ${del}</span><br>Disertakan: <span style="color:var(--accent)">${keepStr}</span>`;
   }
+}
+
+// ── Tanggal Acuan Harga ────────────────────────────────────────────
+function fmtDateVal(yr, mo, da) {
+  return `${yr}-${String(mo).padStart(2, '0')}-${String(da).padStart(2, '0')}`;
+}
+// Isi nilai default input tanggal (sekali, jika masih kosong)
+function initDateInputs() {
+  const y = new Date().getFullYear();
+  const set = (id, val) => { const el = document.getElementById(id); if (el && !el.value) el.value = val; };
+  set('dateQ1', fmtDateVal(y, 4, 30));      // Apr (rilis Q1)
+  set('dateQ2', fmtDateVal(y, 7, 30));      // Jul (rilis Q2)
+  set('dateQ3', fmtDateVal(y, 10, 30));     // Okt (rilis Q3)
+  set('dateQ4', fmtDateVal(y + 1, 1, 30));  // Jan (rilis Q4)
+  set('dateYearEnd', fmtDateVal(y, 12, 30));// akhir tahun
+}
+// Baca tanggal dari UI -> objek konfigurasi yang dipakai processSheet
+function readDateConfig() {
+  const y = new Date().getFullYear();
+  const pd = (id, fb) => {
+    const v = document.getElementById(id)?.value;
+    return v ? new Date(v + 'T00:00:00') : fb;
+  };
+  const ye = pd('dateYearEnd', new Date(y, 11, 30));
+  return {
+    q: [
+      pd('dateQ1', new Date(y, 3, 30)),
+      pd('dateQ2', new Date(y, 6, 30)),
+      pd('dateQ3', new Date(y, 9, 30)),
+      pd('dateQ4', new Date(y + 1, 0, 30)),
+    ],
+    yearMonth: ye.getMonth(),
+    yearDay: ye.getDate(),
+  };
 }
 
 // ── File Upload ────────────────────────────────────────────────────
@@ -658,6 +739,7 @@ async function processFile() {
 
   const startTime = Date.now();
   const sheets = workbook.SheetNames;
+  dateConfig = readDateConfig(); // ambil tanggal acuan harga dari UI
   log(`Mulai proses ${sheets.length} sheet...`, 'info');
 
   // Create new workbook
@@ -843,9 +925,13 @@ function processSheet(rawSheet, sheetName) {
   if (!clearCols.has(5)) setCell(newSheet, 0, 5, 'Q3', 's');
   if (!clearCols.has(6)) setCell(newSheet, 0, 6, 'Q4', 's');
   setCell(newSheet, 0, 7, 'tahun Berjalan', 's');
+  // Tanggal acuan harga dari UI (typeof guard agar aman saat dijalankan di luar browser)
+  const _dc = (typeof dateConfig !== 'undefined' && dateConfig) ? dateConfig : null;
+  const yEndMonth = _dc ? _dc.yearMonth : 11; // default Desember
+  const yEndDay = _dc ? _dc.yearDay : 30;      // default tanggal 30
   for (let ci = annualStartCol + 1; ci <= maxCol; ci++) {
     const yr = parseHeaderYear(getHeaderText(ci)) || (baseYear - (ci - annualStartCol));
-    setCell(newSheet, 0, ci, new Date(yr, 11, 30), 'd');
+    setCell(newSheet, 0, ci, new Date(yr, yEndMonth, yEndDay), 'd');
   }
 
   // === BARIS 2: Harga saham via STOCKHISTORY (Excel 365) — sesuai master ===
@@ -864,11 +950,13 @@ function processSheet(rawSheet, sheetName) {
     setCell(newSheet, 1, ci, `=IFERROR(_xlfn.STOCKHISTORY("XIDX:" & $C$1, ${col}1, , 0, 0, 1), "Libur")`, 'f');
   }
 
-  // === BARIS 3: Tanggal rilis quarter (tanggal asli agar STOCKHISTORY berfungsi) ===
-  if (!clearCols.has(3)) setCell(newSheet, 2, 3, new Date(currentYear, 3, 30), 'd');   // Apr (rilis Q1)
-  if (!clearCols.has(4)) setCell(newSheet, 2, 4, new Date(currentYear, 6, 30), 'd');   // Jul (rilis Q2)
-  if (!clearCols.has(5)) setCell(newSheet, 2, 5, new Date(currentYear, 9, 30), 'd');   // Okt (rilis Q3)
-  if (!clearCols.has(6)) setCell(newSheet, 2, 6, new Date(currentYear + 1, 0, 30), 'd'); // Jan (rilis Q4)
+  // === BARIS 3: Tanggal rilis quarter (dari UI; tanggal asli agar STOCKHISTORY berfungsi) ===
+  const _qd = (_dc && _dc.q) ? _dc.q
+    : [new Date(currentYear, 3, 30), new Date(currentYear, 6, 30), new Date(currentYear, 9, 30), new Date(currentYear + 1, 0, 30)];
+  if (!clearCols.has(3)) setCell(newSheet, 2, 3, _qd[0], 'd'); // rilis Q1
+  if (!clearCols.has(4)) setCell(newSheet, 2, 4, _qd[1], 'd'); // rilis Q2
+  if (!clearCols.has(5)) setCell(newSheet, 2, 5, _qd[2], 'd'); // rilis Q3
+  if (!clearCols.has(6)) setCell(newSheet, 2, 6, _qd[3], 'd'); // rilis Q4
 
   // === BARIS 4–16: Ringkasan finansial dengan INDEX/MATCH ke kolom B ===
   // Data mentah: label di kolom C, nilai Q1 di kolom D, nilai tahunan di kolom I+.
@@ -1235,6 +1323,9 @@ function downloadFile() {
   const outName = fileName.replace(/\.xlsx?$/i, '') + '_laporan_keuangan.xlsx';
   XLSX.writeFile(processedWB, outName);
 }
+
+// Isi nilai default input tanggal saat halaman dibuka
+initDateInputs();
 </script>
 </body>
 </html>
