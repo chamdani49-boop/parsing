@@ -848,17 +848,27 @@ function processSheet(rawSheet, sheetName) {
     setCell(newSheet, 0, ci, new Date(yr, 11, 30), 'd');
   }
 
-  // === BARIS 2: Harga saham (user isi manual) ===
-  setCell(newSheet, 1, 2, '#VALUE!', 's');
-  for (let ci = 3; ci <= maxCol; ci++) {
-    if (!clearCols.has(ci)) setCell(newSheet, 1, ci, 0, 'n');
+  // === BARIS 2: Harga saham via STOCKHISTORY (Excel 365) — sesuai master ===
+  // D-G: harga pada tanggal rilis kuartal (baris 3). H: harga terkini via _FV (tipe data Stocks).
+  // I+: harga pada tanggal akhir tahun (baris 1). Ticker diambil dari $C$1.
+  setCell(newSheet, 1, 2, ticker, 's'); // C2: anchor untuk =_FV (ubah ke tipe data Stocks di Excel)
+  for (let ci = 3; ci <= 6; ci++) { // D-G (kuartal) -> tanggal rilis di baris 3
+    if (clearCols.has(ci)) continue;
+    const col = XLSX.utils.encode_col(ci);
+    setCell(newSheet, 1, ci, `=IFERROR(_xlfn.STOCKHISTORY("XIDX:" & $C$1, ${col}3, , 0, 0, 1), "Libur")`, 'f');
+  }
+  setCell(newSheet, 1, 7, `=_FV(C2,"Price")`, 'f'); // H (tahun berjalan) = harga terkini
+  for (let ci = 8; ci <= maxCol; ci++) { // I+ (tahunan) -> tanggal akhir tahun di baris 1
+    if (clearCols.has(ci)) continue;
+    const col = XLSX.utils.encode_col(ci);
+    setCell(newSheet, 1, ci, `=IFERROR(_xlfn.STOCKHISTORY("XIDX:" & $C$1, ${col}1, , 0, 0, 1), "Libur")`, 'f');
   }
 
-  // === BARIS 3: Estimasi tanggal rilis quarter ===
-  if (!clearCols.has(3)) setCell(newSheet, 2, 3, `Apr ${currentYear}`, 's');
-  if (!clearCols.has(4)) setCell(newSheet, 2, 4, `Jul ${currentYear}`, 's');
-  if (!clearCols.has(5)) setCell(newSheet, 2, 5, `Okt ${currentYear}`, 's');
-  if (!clearCols.has(6)) setCell(newSheet, 2, 6, `Jan ${currentYear+1}`, 's');
+  // === BARIS 3: Tanggal rilis quarter (tanggal asli agar STOCKHISTORY berfungsi) ===
+  if (!clearCols.has(3)) setCell(newSheet, 2, 3, new Date(currentYear, 3, 30), 'd');   // Apr (rilis Q1)
+  if (!clearCols.has(4)) setCell(newSheet, 2, 4, new Date(currentYear, 6, 30), 'd');   // Jul (rilis Q2)
+  if (!clearCols.has(5)) setCell(newSheet, 2, 5, new Date(currentYear, 9, 30), 'd');   // Okt (rilis Q3)
+  if (!clearCols.has(6)) setCell(newSheet, 2, 6, new Date(currentYear + 1, 0, 30), 'd'); // Jan (rilis Q4)
 
   // === BARIS 4–16: Ringkasan finansial dengan INDEX/MATCH ke kolom B ===
   // Data mentah: label di kolom C, nilai Q1 di kolom D, nilai tahunan di kolom I+.
@@ -871,10 +881,10 @@ function processSheet(rawSheet, sheetName) {
   setCell(newSheet, 3, 1, 'LABA KOTOR', 's');
   setCell(newSheet, 3, 2, 'Total Pendapatan', 's');
   if (!clearCols.has(3)) setCell(newSheet, 3, 3, idxB('D', '$C$4'), 'f'); // Q1 dari kolom D
-  if (!clearCols.has(4)) setCell(newSheet, 3, 4, '', 's'); // Q2 kosong di Stockbit
-  if (!clearCols.has(5)) setCell(newSheet, 3, 5, '', 's'); // Q3 kosong
-  if (!clearCols.has(6)) setCell(newSheet, 3, 6, '', 's'); // Q4 kosong
-  setCell(newSheet, 3, 7, `=IFERROR(SUM(D4:G4)*(4/MAX(1,COUNT(D4:G4))),${idxB('H','$C$4')})`, 'f');
+  if (!clearCols.has(4)) setCell(newSheet, 3, 4, idxB('E', '$C$4'), 'f'); // Q2
+  if (!clearCols.has(5)) setCell(newSheet, 3, 5, idxB('F', '$C$4'), 'f'); // Q3
+  if (!clearCols.has(6)) setCell(newSheet, 3, 6, idxB('G', '$C$4'), 'f'); // Q4
+  setCell(newSheet, 3, 7, `=IFERROR(SUM(D4:G4)*(4/MAX(1,COUNT(D4:G4))),"")`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
     if (!clearCols.has(ci)) setCell(newSheet, 3, ci, idxB(col, '$C$4'), 'f');
@@ -884,10 +894,10 @@ function processSheet(rawSheet, sheetName) {
   setCell(newSheet, 4, 1, 'BERSIH', 's');
   setCell(newSheet, 4, 2, 'Pemilik Entitas Induk', 's');
   if (!clearCols.has(3)) setCell(newSheet, 4, 3, idxB('D', '$C$5'), 'f');
-  if (!clearCols.has(4)) setCell(newSheet, 4, 4, '', 's');
-  if (!clearCols.has(5)) setCell(newSheet, 4, 5, '', 's');
-  if (!clearCols.has(6)) setCell(newSheet, 4, 6, '', 's');
-  setCell(newSheet, 4, 7, `=IFERROR(SUM(D5:G5)*(4/MAX(1,COUNT(D5:G5))),${idxB('H','$C$5')})`, 'f');
+  if (!clearCols.has(4)) setCell(newSheet, 4, 4, idxB('E', '$C$5'), 'f');
+  if (!clearCols.has(5)) setCell(newSheet, 4, 5, idxB('F', '$C$5'), 'f');
+  if (!clearCols.has(6)) setCell(newSheet, 4, 6, idxB('G', '$C$5'), 'f');
+  setCell(newSheet, 4, 7, `=IFERROR(SUM(D5:G5)*(4/MAX(1,COUNT(D5:G5))),"")`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
     if (!clearCols.has(ci)) setCell(newSheet, 4, ci, idxB(col, '$C$5'), 'f');
@@ -1013,7 +1023,10 @@ function processSheet(rawSheet, sheetName) {
   // Row 14: Beban Keuangan
   setCell(newSheet, 13, 2, 'Beban Keuangan', 's');
   if (!clearCols.has(3)) setCell(newSheet, 13, 3, idxB('D', '$C$14'), 'f');
-  setCell(newSheet, 13, 7, `=IFERROR(SUM(D14:G14)*(4/MAX(1,COUNT(D14:G14))),${idxB('H','$C$14')})`, 'f');
+  if (!clearCols.has(4)) setCell(newSheet, 13, 4, idxB('E', '$C$14'), 'f');
+  if (!clearCols.has(5)) setCell(newSheet, 13, 5, idxB('F', '$C$14'), 'f');
+  if (!clearCols.has(6)) setCell(newSheet, 13, 6, idxB('G', '$C$14'), 'f');
+  setCell(newSheet, 13, 7, `=IFERROR(SUM(D14:G14)*(4/MAX(1,COUNT(D14:G14))),"")`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
     if (!clearCols.has(ci)) setCell(newSheet, 13, ci, idxB(col, '$C$14'), 'f');
@@ -1022,7 +1035,10 @@ function processSheet(rawSheet, sheetName) {
   // Row 15: Beban Pajak Penghasilan
   setCell(newSheet, 14, 2, 'Beban Pajak Penghasilan', 's');
   if (!clearCols.has(3)) setCell(newSheet, 14, 3, idxB('D', '$C$15'), 'f');
-  setCell(newSheet, 14, 7, `=IFERROR(SUM(D15:G15)*(4/MAX(1,COUNT(D15:G15))),${idxB('H','$C$15')})`, 'f');
+  if (!clearCols.has(4)) setCell(newSheet, 14, 4, idxB('E', '$C$15'), 'f');
+  if (!clearCols.has(5)) setCell(newSheet, 14, 5, idxB('F', '$C$15'), 'f');
+  if (!clearCols.has(6)) setCell(newSheet, 14, 6, idxB('G', '$C$15'), 'f');
+  setCell(newSheet, 14, 7, `=IFERROR(SUM(D15:G15)*(4/MAX(1,COUNT(D15:G15))),"")`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
     if (!clearCols.has(ci)) setCell(newSheet, 14, ci, idxB(col, '$C$15'), 'f');
@@ -1031,7 +1047,10 @@ function processSheet(rawSheet, sheetName) {
   // Row 16: Laba Sebelum Pajak
   setCell(newSheet, 15, 2, 'Laba Sebelum Pajak', 's');
   if (!clearCols.has(3)) setCell(newSheet, 15, 3, idxB('D', '$C$16'), 'f');
-  setCell(newSheet, 15, 7, `=IFERROR(SUM(D16:G16)*(4/MAX(1,COUNT(D16:G16))),${idxB('H','$C$16')})`, 'f');
+  if (!clearCols.has(4)) setCell(newSheet, 15, 4, idxB('E', '$C$16'), 'f');
+  if (!clearCols.has(5)) setCell(newSheet, 15, 5, idxB('F', '$C$16'), 'f');
+  if (!clearCols.has(6)) setCell(newSheet, 15, 6, idxB('G', '$C$16'), 'f');
+  setCell(newSheet, 15, 7, `=IFERROR(SUM(D16:G16)*(4/MAX(1,COUNT(D16:G16))),"")`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
     if (!clearCols.has(ci)) setCell(newSheet, 15, ci, idxB(col, '$C$16'), 'f');
