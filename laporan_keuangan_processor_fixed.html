@@ -1213,7 +1213,12 @@ function processSheet(rawSheet, sheetName) {
     if (clearCols.has(ci)) continue;
     const col = XLSX.utils.encode_col(ci);
     // Share Outstanding #2 (detail / angka penuh) — match $C$7 ("Share Outstanding")
-    setCell(newSheet, 20, ci, `=IFERROR(INDEX(${col}51:${col}500,MATCH($C$7,$C$51:$C$500,0)),"")`, 'f');
+    if (ci === 7) {
+      // tahun berjalan: kuartal terakhir (kolom H data mentah kosong)
+      setCell(newSheet, 20, ci, `=IFERROR(INDEX(D21:G21,COUNT(D21:G21)),"")`, 'f');
+    } else {
+      setCell(newSheet, 20, ci, `=IFERROR(INDEX(${col}51:${col}500,MATCH($C$7,$C$51:$C$500,0)),"")`, 'f');
+    }
     // Market Cap = jumlah saham x harga (IFERROR agar tak #VALUE! saat harga "Libur")
     setCell(newSheet, 19, ci, `=IFERROR(${col}21*${col}2,"")`, 'f');
   }
