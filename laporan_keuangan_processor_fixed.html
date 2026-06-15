@@ -1036,6 +1036,9 @@ function processSheet(rawSheet, sheetName) {
   setCell(newSheet, 5, 1, 'EQUITY', 's');
   setCell(newSheet, 5, 2, 'Total Ekuitas', 's');
   if (!clearCols.has(3)) setCell(newSheet, 5, 3, idxB('D', '$C$6'), 'f');
+  if (!clearCols.has(4)) setCell(newSheet, 5, 4, idxB('E', '$C$6'), 'f');
+  if (!clearCols.has(5)) setCell(newSheet, 5, 5, idxB('F', '$C$6'), 'f');
+  if (!clearCols.has(6)) setCell(newSheet, 5, 6, idxB('G', '$C$6'), 'f');
   if (!clearCols.has(7)) setCell(newSheet, 5, 7, `=IFERROR(INDEX(D6:G6,COUNT(D6:G6)),"")`, 'f');
   for (let ci = 8; ci <= maxCol; ci++) {
     const col = XLSX.utils.encode_col(ci);
@@ -1048,15 +1051,12 @@ function processSheet(rawSheet, sheetName) {
   // Atau cek dua sumber: MATCH "Share Outstanding" di $C$51:$C$500
   setCell(newSheet, 6, 1, 'SAHAM BEREDAR', 's');
   setCell(newSheet, 6, 2, 'Share Outstanding', 's');
-  // Q1-Q4: ambil dari Key Ratio section (kolom C-F)
-  if (!clearCols.has(3)) setCell(newSheet, 6, 3, `=IFERROR(INDEX(D51:D500,MATCH("Share Outstanding",$C$51:$C$500,0)),IFERROR(INDEX(D51:D500,MATCH($C$7,$C$51:$C$500,0)),""))`, 'f');
-  if (!clearCols.has(4)) setCell(newSheet, 6, 4, `=IFERROR(INDEX(E51:E500,MATCH("Share Outstanding",$C$51:$C$500,0)),"")`, 'f');
-  if (!clearCols.has(5)) setCell(newSheet, 6, 5, `=IFERROR(INDEX(F51:F500,MATCH("Share Outstanding",$C$51:$C$500,0)),"")`, 'f');
-  if (!clearCols.has(6)) setCell(newSheet, 6, 6, `=IFERROR(INDEX(G51:G500,MATCH("Share Outstanding",$C$51:$C$500,0)),"")`, 'f');
-  if (!clearCols.has(7)) setCell(newSheet, 6, 7, `=IFERROR(INDEX(D7:G7,COUNT(D7:G7)),"")`, 'f');
-  for (let ci = 8; ci <= maxCol; ci++) {
+  // Share Outstanding #1 (ringkas): nilai sumber tanpa "B" = (angka penuh)/1 miliar, mis. "24.03 B" -> 24,03
+  for (let ci = 3; ci <= maxCol; ci++) {
+    if (clearCols.has(ci)) continue;
+    if (ci === 7) { setCell(newSheet, 6, 7, `=IFERROR(INDEX(D7:G7,COUNT(D7:G7)),"")`, 'f'); continue; }
     const col = XLSX.utils.encode_col(ci);
-    if (!clearCols.has(ci)) setCell(newSheet, 6, ci, idxB(col, '$C$7'), 'f');
+    setCell(newSheet, 6, ci, `=IFERROR(INDEX(${col}51:${col}500,MATCH($C$7,$C$51:$C$500,0))/1000000000,"")`, 'f');
   }
 
   // Row 8: Free Cash Flow
@@ -1212,14 +1212,10 @@ function processSheet(rawSheet, sheetName) {
   for (let ci = 3; ci <= maxCol; ci++) {
     if (clearCols.has(ci)) continue;
     const col = XLSX.utils.encode_col(ci);
-    // Share Outstanding: cari "Current Share Outstanding" di key stats (col H=annual)
-    // atau "Share Outstanding" di quarterly
-    if (ci === 3) {
-      setCell(newSheet, 20, ci, `=IFERROR(INDEX(D51:D500,MATCH("Share Outstanding",$C$51:$C$500,0)),"")`, 'f');
-    } else {
-      setCell(newSheet, 20, ci, idxB(col, '"Share Outstanding"'), 'f');
-    }
-    setCell(newSheet, 19, ci, `=${col}21*${col}2`, 'f');
+    // Share Outstanding #2 (detail / angka penuh) — match $C$7 ("Share Outstanding")
+    setCell(newSheet, 20, ci, `=IFERROR(INDEX(${col}51:${col}500,MATCH($C$7,$C$51:$C$500,0)),"")`, 'f');
+    // Market Cap = jumlah saham x harga (IFERROR agar tak #VALUE! saat harga "Libur")
+    setCell(newSheet, 19, ci, `=IFERROR(${col}21*${col}2,"")`, 'f');
   }
 
   // === BARIS 23-28: ROE, EPS, SPS ===
@@ -1238,9 +1234,13 @@ function processSheet(rawSheet, sheetName) {
     const col5 = XLSX.utils.encode_col(ci + 5);
     setCell(newSheet, 22, ci, `=IFERROR(${col}5/${col}6*100,"")`, 'f');
     setCell(newSheet, 23, ci, `=IFERROR(_xlfn.RRI(5,${col5}23,${col}23),"")`, 'f');
-    if (ci === 3) {
-      setCell(newSheet, 24, ci, `=IFERROR(INDEX(D51:D500,MATCH($A$25,$C$51:$C$500,0)),"")`, 'f');
+    if (ci >= 3 && ci <= 6) {
+      // EPS kuartal: cocokkan label kolom A ("EPS")
+      setCell(newSheet, 24, ci, `=IFERROR(INDEX(${col}51:${col}500,MATCH($A$25,$C$51:$C$500,0)),"")`, 'f');
+    } else if (ci === 7) {
+      setCell(newSheet, 24, ci, `=IFERROR(INDEX(D25:G25,COUNT(D25:G25)),"")`, 'f');
     } else {
+      // EPS tahunan: cocokkan label kolom C ("EPS (Annual)")
       setCell(newSheet, 24, ci, idxB(col, '$C$25'), 'f');
     }
     setCell(newSheet, 25, ci, `=IFERROR(_xlfn.RRI(5,${col5}25,${col}25),"")`, 'f');
@@ -1262,13 +1262,19 @@ function processSheet(rawSheet, sheetName) {
     if (a) setCell(newSheet, rowIdx, 0, a, 's');
     if (b) setCell(newSheet, rowIdx, 1, b, 's');
     if (c) setCell(newSheet, rowIdx, 2, c, 's');
+    const R = rowIdx + 1; // nomor baris Excel
     for (let ci = 3; ci <= maxCol; ci++) {
       if (clearCols.has(ci)) continue;
       const col = XLSX.utils.encode_col(ci);
-      if (ci === 3 && a) {
-        setCell(newSheet, rowIdx, ci, `=IFERROR(INDEX(D51:D500,MATCH($A$${rowIdx+1},$C$51:$C$500,0)),"")`, 'f');
+      if (a && ci >= 3 && ci <= 6) {
+        // kuartal: cocokkan label kolom A (varian "(Quarter)")
+        setCell(newSheet, rowIdx, ci, `=IFERROR(INDEX(${col}51:${col}500,MATCH($A$${R},$C$51:$C$500,0)),"")`, 'f');
+      } else if (a && ci === 7) {
+        // tahun berjalan: kuartal terakhir yang tersedia
+        setCell(newSheet, rowIdx, ci, `=IFERROR(INDEX(D${R}:G${R},COUNT(D${R}:G${R})),"")`, 'f');
       } else {
-        setCell(newSheet, rowIdx, ci, idxB(col, `$C$${rowIdx+1}`), 'f');
+        // tahunan (atau baris tanpa varian kuartal): cocokkan label kolom C
+        setCell(newSheet, rowIdx, ci, idxB(col, `$C$${R}`), 'f');
       }
     }
   });
@@ -1322,7 +1328,7 @@ function processSheet(rawSheet, sheetName) {
   const DEC_FMT = '#,##0.00';
   const fmtByRow = {};
   [23, 25, 27, 35].forEach(r => { fmtByRow[r] = PCT_FMT; });           // index 0-based
-  [8, 9, 22, 24, 26, 31, 32, 33, 34, 36].forEach(r => { fmtByRow[r] = DEC_FMT; });
+  [6, 8, 9, 22, 24, 26, 31, 32, 33, 34, 36].forEach(r => { fmtByRow[r] = DEC_FMT; });
   for (const r in fmtByRow) {
     for (let c = 3; c <= maxCol; c++) {
       const addr = XLSX.utils.encode_cell({r: +r, c});
