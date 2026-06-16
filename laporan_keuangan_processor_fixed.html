@@ -1253,6 +1253,17 @@ function processSheet(rawSheet, sheetName) {
     setCell(newSheet, 27, ci, `=IFERROR(_xlfn.RRI(5,${col5}27,${col}27),"")`, 'f');
   }
 
+  // === BARIS 29-30: Growth tahunan (YoY) EPS & SPS — kolom H..Z, mengikuti kolom ===
+  setCell(newSheet, 28, 2, 'EPS Growth (Annual)', 's');
+  setCell(newSheet, 29, 2, 'SPS Growth (Annual)', 's');
+  for (let ci = 7; ci <= maxCol; ci++) {
+    if (clearCols.has(ci)) continue;
+    const col = XLSX.utils.encode_col(ci);
+    const nxt = XLSX.utils.encode_col(ci + 1); // kolom berikutnya = tahun sebelumnya
+    setCell(newSheet, 28, ci, `=IFERROR(((${col}25-${nxt}25)/${nxt}25)*100%,"")`, 'f'); // EPS Growth (Annual)
+    setCell(newSheet, 29, ci, `=IFERROR(((${col}27-${nxt}27)/${nxt}27)*100%,"")`, 'f'); // SPS Growth (Annual)
+  }
+
   // === BARIS 32-37: Book Value, PBV, PER, PSR, DPR, DPS ===
   const valRows = [
     [31, 'Book Value Per Share (quarter)', 'Book Value',  'Book Value Per Share (Annual)'],
@@ -1332,7 +1343,7 @@ function processSheet(rawSheet, sheetName) {
   const PCT_FMT = '0.00%';
   const DEC_FMT = '#,##0.00';
   const fmtByRow = {};
-  [23, 25, 27, 35].forEach(r => { fmtByRow[r] = PCT_FMT; });           // index 0-based
+  [23, 25, 27, 28, 29, 35].forEach(r => { fmtByRow[r] = PCT_FMT; });           // index 0-based
   [6, 8, 9, 22, 24, 26, 31, 32, 33, 34, 36].forEach(r => { fmtByRow[r] = DEC_FMT; });
   for (const r in fmtByRow) {
     for (let c = 3; c <= maxCol; c++) {
