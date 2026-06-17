@@ -998,6 +998,10 @@ function processSheet(rawSheet, sheetName) {
   if (!clearCols.has(4)) setCell(newSheet, 2, 4, _qd[1], 'd'); // rilis Q2
   if (!clearCols.has(5)) setCell(newSheet, 2, 5, _qd[2], 'd'); // rilis Q3
   if (!clearCols.has(6)) setCell(newSheet, 2, 6, _qd[3], 'd'); // rilis Q4
+  setCell(newSheet, 2, 7, `=IFERROR(@INDEX(D3:G3,COUNT(D3:G3)),"")`, 'f'); // H3: tanggal kuartal terakhir
+  // Terapkan format tanggal pada H3
+  const h3Addr = XLSX.utils.encode_cell({r: 2, c: 7});
+  if (newSheet[h3Addr]) newSheet[h3Addr].z = 'dd/mm/yyyy';
 
   // === BARIS 4–16: Ringkasan finansial dengan INDEX/MATCH ke kolom B ===
   // Data mentah: label di kolom C, nilai Q1 di kolom D, nilai tahunan di kolom I+.
