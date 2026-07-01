@@ -189,6 +189,45 @@
     gap: 5px;
   }
 
+  /* Anomali periode kuartal (D50:G50) */
+  .anomaly-card { display: none; }
+  .anomaly-card.show { display: block; }
+  .anomaly-summary {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    line-height: 1.5;
+  }
+  .anomaly-item {
+    background: #ffa94d18;
+    border: 1px solid var(--warning);
+    border-left: 3px solid var(--warning);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    font-size: 12px;
+  }
+  .anomaly-item .a-ticker { color: var(--warning); font-weight: 700; letter-spacing: 0.5px; }
+  .anomaly-item .a-text { color: var(--text); margin-top: 5px; word-break: break-word; }
+  .anomaly-item .a-ref { color: var(--text-muted); font-size: 11px; margin-top: 5px; word-break: break-word; }
+  .anomaly-ok {
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .anomaly-ok .a-ref {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-top: 5px;
+    display: block;
+    font-weight: 400;
+    word-break: break-word;
+  }
+
   .sheet-chip {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -507,6 +546,11 @@
       </div>
     </div>
 
+    <div class="card anomaly-card" id="anomalyCard" style="margin-top: 16px;">
+      <div class="card-title">Cek Periode Kuartal (D50:G50)</div>
+      <div id="anomalyBody"></div>
+    </div>
+
     <div class="card" style="margin-top: 16px;">
       <div class="card-title">Status Proses</div>
       <div class="status-panel" id="statusPanel">
@@ -759,6 +803,7 @@ function loadFile(file) {
       document.getElementById('btnProcess').disabled = false;
       document.getElementById('statusPanel').innerHTML = '';
       buildYearInputs(); // bangun input tanggal per tahun dari data
+      renderQuarterAnomalies(); // cek & tampilkan anomali periode D50:G50
       log(`File dimuat: ${file.name}`, 'ok');
       log(`Ditemukan ${sheets.length} sheet: ${sheets.join(', ')}`, 'info');
       log(`Siap diproses. Pilih quarter yang ingin dihapus lalu klik Proses.`, 'info');
@@ -767,6 +812,72 @@ function loadFile(file) {
     }
   };
   reader.readAsArrayBuffer(file);
+}
+
+// ── Cek Anomali Periode Kuartal (D50:G50) ─────────────────────────
+// Tiap sheet = 1 kode saham. Baris header periode ada di baris 50 (range.s.r),
+// kolom D-G = 4 kuartal terbaru. Kita bandingkan D50:G50 antar sheet, tentukan
+// pola mayoritas, lalu tampilkan HANYA kode saham yang periodenya berbeda.
+function detectQuarterAnomalies() {
+  const perSheet = [];
+  const counts = {};
+  (workbook ? workbook.SheetNames : []).forEach(name => {
+    const ws = workbook.Sheets[name];
+    const cells = [];
+    for (let c = 3; c <= 6; c++) { // kolom D(3) .. G(6)
+      // Baca dari baris header data mentah bila diketahui, fallback ke baris 50.
+      let r = 49; // baris 50 (0-indexed) sesuai spesifikasi D50:G50
+      if (ws && ws['!ref']) {
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        // Header periode = baris awal blok data mentah; di file Stockbit = baris 50.
+        if (range.s.r > 0) r = range.s.r;
+      }
+      const cell = ws ? ws[XLSX.utils.encode_cell({ r, c })] : null;
+      cells.push(cell && cell.v != null ? String(cell.v).trim() : '');
+    }
+    const key = cells.join(' | ');
+    counts[key] = (counts[key] || 0) + 1;
+    perSheet.push({ name, cells, key });
+  });
+  // Pola mayoritas = key dengan jumlah terbanyak
+  let majority = null, best = -1;
+  for (const k in counts) {
+    if (counts[k] > best) { best = counts[k]; majority = k; }
+  }
+  const anomalies = perSheet.filter(s => s.key !== majority && s.key.replace(/[| ]/g, '') !== '');
+  return { anomalies, majority, total: perSheet.length, majorityCount: best };
+}
+
+function renderQuarterAnomalies() {
+  const card = document.getElementById('anomalyCard');
+  const body = document.getElementById('anomalyBody');
+  if (!card || !body || !workbook) return;
+  const { anomalies, majority, total, majorityCount } = detectQuarterAnomalies();
+  card.classList.add('show');
+
+  if (anomalies.length === 0) {
+    body.innerHTML =
+      `<div class="anomaly-ok">✅ Semua ${total} kode saham seragam` +
+      `<span class="a-ref">Periode: ${majority || '—'}</span></div>`;
+    log(`Periode kuartal seragam di semua ${total} kode saham.`, 'ok');
+    return;
+  }
+
+  const items = anomalies.map(a =>
+    `<div class="anomaly-item">` +
+      `<span class="a-ticker">⚠️ ${a.name}</span>` +
+      `<div class="a-text">${a.key || '(kosong)'}</div>` +
+      `<div class="a-ref">Mayoritas: ${majority || '—'}</div>` +
+    `</div>`
+  ).join('');
+
+  body.innerHTML =
+    `<div class="anomaly-summary">${anomalies.length} dari ${total} kode saham berbeda ` +
+    `(mayoritas ${majorityCount} kode). Periksa apakah kolom kuartalnya sejajar sebelum Proses.</div>` +
+    items;
+
+  const names = anomalies.map(a => a.name).join(', ');
+  log(`Anomali periode kuartal pada ${anomalies.length} kode: ${names}`, 'warn');
 }
 
 // ── Main Process ───────────────────────────────────────────────────
