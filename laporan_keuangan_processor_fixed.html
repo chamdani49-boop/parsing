@@ -189,6 +189,45 @@
     gap: 5px;
   }
 
+  /* Anomali periode kuartal (D50:G50) */
+  .anomaly-card { display: none; }
+  .anomaly-card.show { display: block; }
+  .anomaly-summary {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    line-height: 1.5;
+  }
+  .anomaly-item {
+    background: #ffa94d18;
+    border: 1px solid var(--warning);
+    border-left: 3px solid var(--warning);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    font-size: 12px;
+  }
+  .anomaly-item .a-ticker { color: var(--warning); font-weight: 700; letter-spacing: 0.5px; }
+  .anomaly-item .a-text { color: var(--text); margin-top: 5px; word-break: break-word; }
+  .anomaly-item .a-ref { color: var(--text-muted); font-size: 11px; margin-top: 5px; word-break: break-word; }
+  .anomaly-ok {
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .anomaly-ok .a-ref {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-top: 5px;
+    display: block;
+    font-weight: 400;
+    word-break: break-word;
+  }
+
   .sheet-chip {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -451,8 +490,14 @@
     gap: 8px;
   }
 
-  .btn-download:hover {
+  .btn-download:hover:not(:disabled) {
     background: var(--accent-dim);
+  }
+  .btn-download:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    border-color: var(--border);
+    color: var(--text-muted);
   }
 
   /* Summary tags in result */
@@ -505,6 +550,11 @@
         <div class="fmeta" id="fileMeta">—</div>
         <div class="sheets-list" id="sheetList"></div>
       </div>
+    </div>
+
+    <div class="card anomaly-card" id="anomalyCard" style="margin-top: 16px;">
+      <div class="card-title">Cek Periode Kuartal (D50:G50)</div>
+      <div id="anomalyBody"></div>
     </div>
 
     <div class="card" style="margin-top: 16px;">
@@ -594,6 +644,31 @@
       </div>
     </div>
   </div>
+</div>
+
+<!-- Kembalikan File Jadi → Mentah -->
+<div class="card" id="revertCard" style="margin-bottom:20px;">
+  <div class="card-title">Kembalikan File Jadi → Mentah</div>
+  <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px; line-height:1.6;">
+    Upload file <strong>hasil proses</strong> (.xlsx) untuk dikembalikan ke
+    <strong style="color:var(--accent)">format mentah</strong> Stockbit (blok data baris 50 ke bawah).
+    Baris ringkasan <strong>A1:Z49</strong> dibuang. File mentah hasilnya bisa kamu upload lagi di panel atas lalu Proses ulang.
+  </p>
+  <div class="upload-zone" id="revertZone">
+    <input type="file" id="revertInput" accept=".xlsx,.xls">
+    <span class="upload-icon">♻️</span>
+    <strong>Klik atau drag file hasil (.xlsx)</strong>
+    <p>File yang sudah diproses<br>akan dikembalikan ke mentah</p>
+  </div>
+  <div class="file-info" id="revertInfo">
+    <div class="fname" id="revertFileName">—</div>
+    <div class="fmeta" id="revertFileMeta">—</div>
+    <div class="sheets-list" id="revertSheetList"></div>
+    <div id="revertStatus" style="margin-top:8px; font-size:12px; color:var(--text-muted);"></div>
+  </div>
+  <button class="btn-download" id="btnRevert" style="margin-top:14px;" disabled onclick="revertToRaw()">
+    ♻️ Kembalikan ke Mentah &amp; Download
+  </button>
 </div>
 
 <!-- Results -->
@@ -759,6 +834,7 @@ function loadFile(file) {
       document.getElementById('btnProcess').disabled = false;
       document.getElementById('statusPanel').innerHTML = '';
       buildYearInputs(); // bangun input tanggal per tahun dari data
+      renderQuarterAnomalies(); // cek & tampilkan anomali periode D50:G50
       log(`File dimuat: ${file.name}`, 'ok');
       log(`Ditemukan ${sheets.length} sheet: ${sheets.join(', ')}`, 'info');
       log(`Siap diproses. Pilih quarter yang ingin dihapus lalu klik Proses.`, 'info');
@@ -767,6 +843,72 @@ function loadFile(file) {
     }
   };
   reader.readAsArrayBuffer(file);
+}
+
+// ── Cek Anomali Periode Kuartal (D50:G50) ─────────────────────────
+// Tiap sheet = 1 kode saham. Baris header periode ada di baris 50 (range.s.r),
+// kolom D-G = 4 kuartal terbaru. Kita bandingkan D50:G50 antar sheet, tentukan
+// pola mayoritas, lalu tampilkan HANYA kode saham yang periodenya berbeda.
+function detectQuarterAnomalies() {
+  const perSheet = [];
+  const counts = {};
+  (workbook ? workbook.SheetNames : []).forEach(name => {
+    const ws = workbook.Sheets[name];
+    const cells = [];
+    for (let c = 3; c <= 6; c++) { // kolom D(3) .. G(6)
+      // Baca dari baris header data mentah bila diketahui, fallback ke baris 50.
+      let r = 49; // baris 50 (0-indexed) sesuai spesifikasi D50:G50
+      if (ws && ws['!ref']) {
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        // Header periode = baris awal blok data mentah; di file Stockbit = baris 50.
+        if (range.s.r > 0) r = range.s.r;
+      }
+      const cell = ws ? ws[XLSX.utils.encode_cell({ r, c })] : null;
+      cells.push(cell && cell.v != null ? String(cell.v).trim() : '');
+    }
+    const key = cells.join(' | ');
+    counts[key] = (counts[key] || 0) + 1;
+    perSheet.push({ name, cells, key });
+  });
+  // Pola mayoritas = key dengan jumlah terbanyak
+  let majority = null, best = -1;
+  for (const k in counts) {
+    if (counts[k] > best) { best = counts[k]; majority = k; }
+  }
+  const anomalies = perSheet.filter(s => s.key !== majority && s.key.replace(/[| ]/g, '') !== '');
+  return { anomalies, majority, total: perSheet.length, majorityCount: best };
+}
+
+function renderQuarterAnomalies() {
+  const card = document.getElementById('anomalyCard');
+  const body = document.getElementById('anomalyBody');
+  if (!card || !body || !workbook) return;
+  const { anomalies, majority, total, majorityCount } = detectQuarterAnomalies();
+  card.classList.add('show');
+
+  if (anomalies.length === 0) {
+    body.innerHTML =
+      `<div class="anomaly-ok">✅ Semua ${total} kode saham seragam` +
+      `<span class="a-ref">Periode: ${majority || '—'}</span></div>`;
+    log(`Periode kuartal seragam di semua ${total} kode saham.`, 'ok');
+    return;
+  }
+
+  const items = anomalies.map(a =>
+    `<div class="anomaly-item">` +
+      `<span class="a-ticker">⚠️ ${a.name}</span>` +
+      `<div class="a-text">${a.key || '(kosong)'}</div>` +
+      `<div class="a-ref">Mayoritas: ${majority || '—'}</div>` +
+    `</div>`
+  ).join('');
+
+  body.innerHTML =
+    `<div class="anomaly-summary">${anomalies.length} dari ${total} kode saham berbeda ` +
+    `(mayoritas ${majorityCount} kode). Periksa apakah kolom kuartalnya sejajar sebelum Proses.</div>` +
+    items;
+
+  const names = anomalies.map(a => a.name).join(', ');
+  log(`Anomali periode kuartal pada ${anomalies.length} kode: ${names}`, 'warn');
 }
 
 // ── Main Process ───────────────────────────────────────────────────
@@ -1389,6 +1531,123 @@ function downloadFile() {
   if (!processedWB) return;
   const outName = fileName.replace(/\.xlsx?$/i, '') + '_laporan_keuangan.xlsx';
   XLSX.writeFile(processedWB, outName);
+}
+
+// ── Kembalikan File Jadi → Mentah ──────────────────────────────────
+// Ambil file hasil proses, buang blok ringkasan A1:Z49, sisakan hanya blok
+// data mentah (baris header periode ke bawah). Hasilnya identik format mentah
+// Stockbit sehingga bisa di-upload lagi & diproses ulang dengan versi terbaru.
+let revertWB = null;
+let revertFileName = '';
+
+function revertLog(msg, isErr) {
+  const el = document.getElementById('revertStatus');
+  if (el) { el.textContent = msg; el.style.color = isErr ? 'var(--danger)' : 'var(--text-muted)'; }
+}
+
+document.getElementById('revertInput').addEventListener('change', function(e) {
+  const f = e.target.files[0];
+  if (f) loadRevertFile(f);
+});
+
+const revertZone = document.getElementById('revertZone');
+revertZone.addEventListener('dragover', e => { e.preventDefault(); revertZone.classList.add('drag-over'); });
+revertZone.addEventListener('dragleave', () => revertZone.classList.remove('drag-over'));
+revertZone.addEventListener('drop', e => {
+  e.preventDefault();
+  revertZone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f && (f.name.endsWith('.xlsx') || f.name.endsWith('.xls'))) loadRevertFile(f);
+});
+
+function loadRevertFile(file) {
+  revertFileName = file.name;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      revertWB = XLSX.read(e.target.result, { type: 'array', cellDates: true, cellStyles: true });
+      const sheets = revertWB.SheetNames;
+      document.getElementById('revertFileName').textContent = file.name;
+      document.getElementById('revertFileMeta').textContent = `${(file.size/1024).toFixed(1)} KB · ${sheets.length} sheet`;
+      document.getElementById('revertSheetList').innerHTML = sheets.map(s => `<span class="sheet-chip">${s}</span>`).join('');
+      document.getElementById('revertInfo').classList.add('show');
+      document.getElementById('btnRevert').disabled = false;
+      revertLog(`Siap dikembalikan. ${sheets.length} sheet terdeteksi.`);
+    } catch (err) {
+      revertWB = null;
+      document.getElementById('btnRevert').disabled = true;
+      document.getElementById('revertInfo').classList.add('show');
+      revertLog('Gagal membaca file: ' + err.message, true);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Cari baris header periode (0-indexed). Header mentah berisi >=2 sel berpola
+// "Q1 2026" (kuartal + tahun). Baris ringkasan A1:Z49 memakai "Q1" polos (tanpa
+// tahun) & "12M 2025", jadi tidak akan salah tangkap. Fallback ke baris 50.
+function findRawHeaderRow(ws) {
+  if (!ws || !ws['!ref']) return 49;
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const qy = /^Q[1-4]\s+\d{4}$/i; // kuartal + tahun, mis. "Q1 2026"
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    let hits = 0;
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell && cell.v != null && qy.test(String(cell.v).trim())) {
+        if (++hits >= 2) return r;
+      }
+    }
+  }
+  return 49; // fallback: baris 50
+}
+
+function revertToRaw() {
+  if (!revertWB) return;
+  try {
+    const newWB = XLSX.utils.book_new();
+    let sheetCount = 0, headerRowUsed = null;
+
+    revertWB.SheetNames.forEach(name => {
+      const ws = revertWB.Sheets[name];
+      if (!ws || !ws['!ref']) {
+        const empty = { '!ref': 'A1:A1' };
+        XLSX.utils.book_append_sheet(newWB, empty, name);
+        return;
+      }
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      const startR = findRawHeaderRow(ws);
+      if (headerRowUsed === null) headerRowUsed = startR + 1; // untuk log (1-indexed)
+
+      const newSheet = {};
+      let maxR = 0, minC = Infinity, maxC = 0;
+      for (let r = startR; r <= range.e.r; r++) {
+        for (let c = range.s.c; c <= range.e.c; c++) {
+          const addr = XLSX.utils.encode_cell({ r, c });
+          const cell = ws[addr];
+          if (!cell || cell.v == null || cell.v === '') continue;
+          // Pertahankan posisi baris & kolom asli (header tetap di baris 50, kolom B..)
+          const nc = { t: cell.t, v: cell.v };
+          if (cell.z) nc.z = cell.z;
+          newSheet[addr] = nc;
+          if (r > maxR) maxR = r;
+          if (c < minC) minC = c;
+          if (c > maxC) maxC = c;
+        }
+      }
+      if (minC === Infinity) { minC = range.s.c; maxC = range.e.c; maxR = startR; }
+      newSheet['!ref'] = XLSX.utils.encode_range({ s: { r: startR, c: minC }, e: { r: maxR, c: maxC } });
+      XLSX.utils.book_append_sheet(newWB, newSheet, name);
+      sheetCount++;
+    });
+
+    const base = revertFileName.replace(/\.xlsx?$/i, '').replace(/_laporan_keuangan$/i, '');
+    const outName = base + '_mentah.xlsx';
+    XLSX.writeFile(newWB, outName);
+    revertLog(`✅ ${sheetCount} sheet dikembalikan ke mentah (header di baris ${headerRowUsed}). File "${outName}" diunduh.`);
+  } catch (err) {
+    revertLog('Gagal mengembalikan: ' + err.message, true);
+  }
 }
 
 // Isi nilai default input tanggal saat halaman dibuka
