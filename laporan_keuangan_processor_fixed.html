@@ -490,8 +490,14 @@
     gap: 8px;
   }
 
-  .btn-download:hover {
+  .btn-download:hover:not(:disabled) {
     background: var(--accent-dim);
+  }
+  .btn-download:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    border-color: var(--border);
+    color: var(--text-muted);
   }
 
   /* Summary tags in result */
@@ -638,6 +644,31 @@
       </div>
     </div>
   </div>
+</div>
+
+<!-- Kembalikan File Jadi → Mentah -->
+<div class="card" id="revertCard" style="margin-bottom:20px;">
+  <div class="card-title">Kembalikan File Jadi → Mentah</div>
+  <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px; line-height:1.6;">
+    Upload file <strong>hasil proses</strong> (.xlsx) untuk dikembalikan ke
+    <strong style="color:var(--accent)">format mentah</strong> Stockbit (blok data baris 50 ke bawah).
+    Baris ringkasan <strong>A1:Z49</strong> dibuang. File mentah hasilnya bisa kamu upload lagi di panel atas lalu Proses ulang.
+  </p>
+  <div class="upload-zone" id="revertZone">
+    <input type="file" id="revertInput" accept=".xlsx,.xls">
+    <span class="upload-icon">♻️</span>
+    <strong>Klik atau drag file hasil (.xlsx)</strong>
+    <p>File yang sudah diproses<br>akan dikembalikan ke mentah</p>
+  </div>
+  <div class="file-info" id="revertInfo">
+    <div class="fname" id="revertFileName">—</div>
+    <div class="fmeta" id="revertFileMeta">—</div>
+    <div class="sheets-list" id="revertSheetList"></div>
+    <div id="revertStatus" style="margin-top:8px; font-size:12px; color:var(--text-muted);"></div>
+  </div>
+  <button class="btn-download" id="btnRevert" style="margin-top:14px;" disabled onclick="revertToRaw()">
+    ♻️ Kembalikan ke Mentah &amp; Download
+  </button>
 </div>
 
 <!-- Results -->
@@ -1500,6 +1531,123 @@ function downloadFile() {
   if (!processedWB) return;
   const outName = fileName.replace(/\.xlsx?$/i, '') + '_laporan_keuangan.xlsx';
   XLSX.writeFile(processedWB, outName);
+}
+
+// ── Kembalikan File Jadi → Mentah ──────────────────────────────────
+// Ambil file hasil proses, buang blok ringkasan A1:Z49, sisakan hanya blok
+// data mentah (baris header periode ke bawah). Hasilnya identik format mentah
+// Stockbit sehingga bisa di-upload lagi & diproses ulang dengan versi terbaru.
+let revertWB = null;
+let revertFileName = '';
+
+function revertLog(msg, isErr) {
+  const el = document.getElementById('revertStatus');
+  if (el) { el.textContent = msg; el.style.color = isErr ? 'var(--danger)' : 'var(--text-muted)'; }
+}
+
+document.getElementById('revertInput').addEventListener('change', function(e) {
+  const f = e.target.files[0];
+  if (f) loadRevertFile(f);
+});
+
+const revertZone = document.getElementById('revertZone');
+revertZone.addEventListener('dragover', e => { e.preventDefault(); revertZone.classList.add('drag-over'); });
+revertZone.addEventListener('dragleave', () => revertZone.classList.remove('drag-over'));
+revertZone.addEventListener('drop', e => {
+  e.preventDefault();
+  revertZone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f && (f.name.endsWith('.xlsx') || f.name.endsWith('.xls'))) loadRevertFile(f);
+});
+
+function loadRevertFile(file) {
+  revertFileName = file.name;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      revertWB = XLSX.read(e.target.result, { type: 'array', cellDates: true, cellStyles: true });
+      const sheets = revertWB.SheetNames;
+      document.getElementById('revertFileName').textContent = file.name;
+      document.getElementById('revertFileMeta').textContent = `${(file.size/1024).toFixed(1)} KB · ${sheets.length} sheet`;
+      document.getElementById('revertSheetList').innerHTML = sheets.map(s => `<span class="sheet-chip">${s}</span>`).join('');
+      document.getElementById('revertInfo').classList.add('show');
+      document.getElementById('btnRevert').disabled = false;
+      revertLog(`Siap dikembalikan. ${sheets.length} sheet terdeteksi.`);
+    } catch (err) {
+      revertWB = null;
+      document.getElementById('btnRevert').disabled = true;
+      document.getElementById('revertInfo').classList.add('show');
+      revertLog('Gagal membaca file: ' + err.message, true);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Cari baris header periode (0-indexed). Header mentah berisi >=2 sel berpola
+// "Q1 2026" (kuartal + tahun). Baris ringkasan A1:Z49 memakai "Q1" polos (tanpa
+// tahun) & "12M 2025", jadi tidak akan salah tangkap. Fallback ke baris 50.
+function findRawHeaderRow(ws) {
+  if (!ws || !ws['!ref']) return 49;
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const qy = /^Q[1-4]\s+\d{4}$/i; // kuartal + tahun, mis. "Q1 2026"
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    let hits = 0;
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell && cell.v != null && qy.test(String(cell.v).trim())) {
+        if (++hits >= 2) return r;
+      }
+    }
+  }
+  return 49; // fallback: baris 50
+}
+
+function revertToRaw() {
+  if (!revertWB) return;
+  try {
+    const newWB = XLSX.utils.book_new();
+    let sheetCount = 0, headerRowUsed = null;
+
+    revertWB.SheetNames.forEach(name => {
+      const ws = revertWB.Sheets[name];
+      if (!ws || !ws['!ref']) {
+        const empty = { '!ref': 'A1:A1' };
+        XLSX.utils.book_append_sheet(newWB, empty, name);
+        return;
+      }
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      const startR = findRawHeaderRow(ws);
+      if (headerRowUsed === null) headerRowUsed = startR + 1; // untuk log (1-indexed)
+
+      const newSheet = {};
+      let maxR = 0, minC = Infinity, maxC = 0;
+      for (let r = startR; r <= range.e.r; r++) {
+        for (let c = range.s.c; c <= range.e.c; c++) {
+          const addr = XLSX.utils.encode_cell({ r, c });
+          const cell = ws[addr];
+          if (!cell || cell.v == null || cell.v === '') continue;
+          // Pertahankan posisi baris & kolom asli (header tetap di baris 50, kolom B..)
+          const nc = { t: cell.t, v: cell.v };
+          if (cell.z) nc.z = cell.z;
+          newSheet[addr] = nc;
+          if (r > maxR) maxR = r;
+          if (c < minC) minC = c;
+          if (c > maxC) maxC = c;
+        }
+      }
+      if (minC === Infinity) { minC = range.s.c; maxC = range.e.c; maxR = startR; }
+      newSheet['!ref'] = XLSX.utils.encode_range({ s: { r: startR, c: minC }, e: { r: maxR, c: maxC } });
+      XLSX.utils.book_append_sheet(newWB, newSheet, name);
+      sheetCount++;
+    });
+
+    const base = revertFileName.replace(/\.xlsx?$/i, '').replace(/_laporan_keuangan$/i, '');
+    const outName = base + '_mentah.xlsx';
+    XLSX.writeFile(newWB, outName);
+    revertLog(`✅ ${sheetCount} sheet dikembalikan ke mentah (header di baris ${headerRowUsed}). File "${outName}" diunduh.`);
+  } catch (err) {
+    revertLog('Gagal mengembalikan: ' + err.message, true);
+  }
 }
 
 // Isi nilai default input tanggal saat halaman dibuka
